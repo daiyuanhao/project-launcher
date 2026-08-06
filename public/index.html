@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Project Launcher</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Manrope:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="bg" aria-hidden="true"></div>
+    <main class="shell">
+      <header class="hero">
+        <p class="brand">Project Launcher</p>
+        <h1>一项目一开关</h1>
+        <p class="sub">打开即启动，关闭即停止。切换网络后可用「重启运行中」刷新 IP。</p>
+        <div class="toolbar">
+          <label class="search">
+            <span class="sr-only">搜索项目</span>
+            <input id="search" type="search" placeholder="搜索项目…" autocomplete="off" />
+          </label>
+          <button type="button" class="ghost" id="manage-watch" title="选择要监听的项目">
+            选择监听
+          </button>
+          <button type="button" class="ghost" id="restart-running" disabled title="重启当前已启动的项目">
+            重启运行中
+          </button>
+          <div class="meta" id="meta">加载中…</div>
+        </div>
+      </header>
+
+      <section class="board" id="board" aria-live="polite"></section>
+
+      <dialog id="watch-dialog">
+        <form method="dialog" class="dialog-body" id="watch-form">
+          <h3>选择要监听的项目</h3>
+          <p class="dialog-hint">只会显示勾选的项目；名单保存在本地 config.json，不会进仓库。</p>
+          <div class="watch-list" id="watch-list"></div>
+          <div class="dialog-actions">
+            <button type="button" class="ghost" id="watch-all">全选</button>
+            <button type="button" class="ghost" id="watch-none">清空</button>
+            <button value="cancel" class="ghost">取消</button>
+            <button value="save" class="ghost primary" id="watch-save">保存</button>
+          </div>
+        </form>
+      </dialog>
+
+      <aside class="drawer" id="drawer" hidden>
+        <div class="drawer-head">
+          <div>
+            <p class="drawer-label">运行日志</p>
+            <h2 id="drawer-title">—</h2>
+          </div>
+          <button type="button" class="ghost" id="drawer-close">关闭</button>
+        </div>
+        <pre id="logs" class="logs"></pre>
+      </aside>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
