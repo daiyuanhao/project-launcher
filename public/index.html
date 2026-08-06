@@ -18,13 +18,13 @@
       <header class="hero">
         <p class="brand">Project Launcher</p>
         <h1>一项目一开关</h1>
-        <p class="sub">打开即启动，关闭即停止。切换网络后可用「重启运行中」刷新 IP。</p>
+        <p class="sub">用系统文件夹选择器添加项目集合或单个项目，再开关启停。</p>
         <div class="toolbar">
           <label class="search">
             <span class="sr-only">搜索项目</span>
             <input id="search" type="search" placeholder="搜索项目…" autocomplete="off" />
           </label>
-          <button type="button" class="ghost" id="manage-watch" title="选择要监听的项目">
+          <button type="button" class="ghost" id="manage-watch" title="添加或管理监听目录">
             选择监听
           </button>
           <button type="button" class="ghost" id="restart-running" disabled title="重启当前已启动的项目">
@@ -37,17 +37,52 @@
       <section class="board" id="board" aria-live="polite"></section>
 
       <dialog id="watch-dialog">
-        <form method="dialog" class="dialog-body" id="watch-form">
-          <h3>选择要监听的项目</h3>
-          <p class="dialog-hint">只会显示勾选的项目；名单保存在本地 config.json，不会进仓库。</p>
-          <div class="watch-list" id="watch-list"></div>
-          <div class="dialog-actions">
-            <button type="button" class="ghost" id="watch-all">全选</button>
-            <button type="button" class="ghost" id="watch-none">清空</button>
-            <button value="cancel" class="ghost">取消</button>
-            <button value="save" class="ghost primary" id="watch-save">保存</button>
+        <div class="dialog-body">
+          <h3>选择监听</h3>
+          <p class="dialog-hint">通过系统文件夹选择器添加：项目集合目录，或单个项目目录。</p>
+          <div class="pick-actions">
+            <button type="button" class="ghost primary" id="pick-collection">选择项目集合目录</button>
+            <button type="button" class="ghost primary" id="pick-project">选择单个项目</button>
           </div>
-        </form>
+          <div class="source-block">
+            <p class="source-title">已添加</p>
+            <div class="watch-list" id="watch-list"></div>
+          </div>
+          <div class="dialog-actions">
+            <button type="button" class="ghost" id="watch-close">完成</button>
+          </div>
+        </div>
+      </dialog>
+
+      <dialog id="cmd-dialog">
+        <div class="dialog-body">
+          <h3 id="cmd-dialog-title">命令设置</h3>
+          <p class="dialog-hint">设置主开关默认命令，并管理「其他命令」快捷入口。</p>
+
+          <label class="field">
+            <span>默认命令</span>
+            <select id="cmd-default"></select>
+          </label>
+          <label class="field">
+            <span>或自定义默认命令</span>
+            <input id="cmd-default-custom" type="text" placeholder="例如：npm run build:mp" autocomplete="off" />
+          </label>
+
+          <div class="source-block">
+            <p class="source-title">其他快捷命令</p>
+            <div class="cmd-shortcut-list" id="cmd-shortcut-list"></div>
+            <div class="cmd-add-row">
+              <select id="cmd-add-select"></select>
+              <input id="cmd-add-custom" type="text" placeholder="或输入自定义命令" autocomplete="off" />
+              <button type="button" class="ghost compact" id="cmd-add-btn">添加</button>
+            </div>
+          </div>
+
+          <div class="dialog-actions">
+            <button type="button" class="ghost" id="cmd-cancel">取消</button>
+            <button type="button" class="ghost primary" id="cmd-save">保存</button>
+          </div>
+        </div>
       </dialog>
 
       <aside class="drawer" id="drawer" hidden>

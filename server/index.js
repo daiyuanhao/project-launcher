@@ -2,7 +2,15 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import express from 'express'
-import { discoverAllProjects, discoverProjects } from './discover.js'
+import {
+  discoverProjects,
+  listProjectScripts,
+  listSources,
+  normalizeConfig,
+  removeProject,
+  setProjectCommands,
+} from './discover.js'
+import { chooseFolder } from './picker.js'
 import { ProcessManager } from './process-manager.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -10,22 +18,33 @@ const rootDir = path.resolve(__dirname, '..')
 const configPath = path.join(rootDir, 'config.json')
 const exampleConfigPath = path.join(rootDir, 'config.example.json')
 
-function loadConfig() {
+function readRawConfig() {
   if (!fs.existsSync(configPath)) {
     if (!fs.existsSync(exampleConfigPath)) {
       throw new Error('缺少 config.json，请先复制 config.example.json')
     }
     fs.copyFileSync(exampleConfigPath, configPath)
-    console.warn('已从 config.example.json 生成 config.json，请设置 root 并选择要监听的项目')
+    console.warn('已从 config.example.json 生成 config.json，请通过「选择监听」添加目录')
   }
   return JSON.parse(fs.readFileSync(configPath, 'utf8'))
 }
 
 function saveConfig(next) {
-  fs.writeFileSync(configPath, JSON.stringify(next, null, 2) + '\n')
+  const toSave = {
+    port: next.port,
+    exclude: next.exclude,
+    collections: next.collections,
+    singles: next.singles,
+    hidden: next.hidden || [],
+    commands: next.commands || {},
+  }
+  fs.writeFileSync(configPath, JSON.stringify(toSave, null, 2) + '\n')
 }
 
-let config = loadConfig()
+let config = normalizeConfig(readRawConfig())
+// 迁移后写回，去掉旧 root/watch 字段
+saveConfig(config)
+
 const app = express()
 const manager = new ProcessManager()
 const clients = new Set()
@@ -40,16 +59,22 @@ function projectMap() {
 function snapshot() {
   const projects = discoverProjects(config)
   const status = manager.listStatus()
-  const watch = Array.isArray(config.watch) ? config.watch : null
   return {
-    watch,
-    root: config.root,
+    sources: listSources(config),
     projects: projects.map((p) => ({
       ...p,
       running: Boolean(status[p.id]),
+      runningEnv: status[p.id]?.env ?? null,
       pid: status[p.id]?.pid ?? null,
       startedAt: status[p.id]?.startedAt ?? null,
+      command: status[p.id]?.command ?? p.command,
     })),
+  }
+}
+
+function stopRemoved(nextIds) {
+  for (const id of Object.keys(manager.listStatus())) {
+    if (!nextIds.has(id)) manager.stop(id)
   }
 }
 
@@ -66,52 +91,157 @@ app.get('/api/projects', (_req, res) => {
   res.json(snapshot())
 })
 
-app.get('/api/discover', (_req, res) => {
-  const all = discoverAllProjects(config)
-  const watch = new Set(Array.isArray(config.watch) ? config.watch : all.map((p) => p.id))
-  res.json({
-    root: config.root,
-    projects: all.map((p) => ({
-      ...p,
-      watching: watch.has(p.id),
-    })),
-  })
+app.get('/api/sources', (_req, res) => {
+  res.json(listSources(config))
 })
 
-app.put('/api/watch', (req, res) => {
-  const list = req.body?.watch
-  if (!Array.isArray(list) || list.some((id) => typeof id !== 'string')) {
-    res.status(400).json({ error: 'watch 需为字符串数组' })
+app.post('/api/sources/pick', async (req, res) => {
+  const kind = req.body?.kind
+  if (kind !== 'collection' && kind !== 'project') {
+    res.status(400).json({ error: 'kind 需为 collection 或 project' })
     return
   }
 
-  const valid = new Set(discoverAllProjects(config).map((p) => p.id))
-  const nextWatch = [...new Set(list.filter((id) => valid.has(id)))]
+  try {
+    const prompt =
+      kind === 'collection' ? '选择项目集合目录（其下多个项目）' : '选择单个项目目录'
+    const picked = await chooseFolder(prompt)
+    if (!picked) {
+      res.json({ cancelled: true, ...snapshot() })
+      return
+    }
 
-  for (const id of Object.keys(manager.listStatus())) {
-    if (!nextWatch.includes(id)) manager.stop(id)
+    const resolved = path.resolve(picked)
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+      res.status(400).json({ error: '所选路径不是有效目录' })
+      return
+    }
+
+    if (kind === 'collection') {
+      config = {
+        ...config,
+        collections: [...new Set([...(config.collections || []), resolved])],
+      }
+    } else {
+      const projects = discoverProjects({
+        ...config,
+        collections: [],
+        singles: [resolved],
+        hidden: [],
+      })
+      if (!projects.length) {
+        res.status(400).json({ error: '该目录未检测到可启动命令（package.json scripts）' })
+        return
+      }
+      config = {
+        ...config,
+        singles: [...new Set([...(config.singles || []), resolved])],
+        hidden: (config.hidden || []).filter((p) => path.resolve(p) !== resolved),
+      }
+    }
+
+    saveConfig(config)
+    res.json({ cancelled: false, path: resolved, ...snapshot() })
+  } catch (err) {
+    res.status(500).json({ error: err.message || String(err) })
+  }
+})
+
+app.delete('/api/sources', (req, res) => {
+  const kind = req.body?.kind
+  const target = req.body?.path
+  if ((kind !== 'collection' && kind !== 'project') || typeof target !== 'string') {
+    res.status(400).json({ error: '需要 kind 与 path' })
+    return
   }
 
-  config = { ...config, watch: nextWatch }
+  const resolved = path.resolve(target)
+  if (kind === 'collection') {
+    config = {
+      ...config,
+      collections: (config.collections || []).filter((p) => p !== resolved),
+    }
+  } else {
+    config = {
+      ...config,
+      singles: (config.singles || []).filter((p) => p !== resolved),
+    }
+  }
+
+  const nextIds = new Set(discoverProjects(config).map((p) => p.id))
+  stopRemoved(nextIds)
   saveConfig(config)
   res.json(snapshot())
+})
+
+app.delete('/api/projects', async (req, res) => {
+  const target = req.body?.path || req.body?.id
+  if (typeof target !== 'string' || !target) {
+    res.status(400).json({ error: '需要 path' })
+    return
+  }
+
+  const resolved = path.resolve(target)
+  config = removeProject(config, resolved)
+  await manager.stop(resolved)
+  saveConfig(config)
+  res.json(snapshot())
+})
+
+app.get('/api/projects/:id/scripts', (req, res) => {
+  const id = decodeURIComponent(req.params.id)
+  if (!projectMap().has(id) && !fs.existsSync(id)) {
+    res.status(404).json({ error: '项目不存在' })
+    return
+  }
+  try {
+    res.json(listProjectScripts(id, config))
+  } catch (err) {
+    res.status(400).json({ error: err.message || String(err) })
+  }
+})
+
+app.put('/api/projects/:id/commands', (req, res) => {
+  const id = decodeURIComponent(req.params.id)
+  if (!projectMap().has(id)) {
+    res.status(404).json({ error: '项目未在监听列表中' })
+    return
+  }
+  try {
+    config = setProjectCommands(config, id, {
+      default: req.body?.default,
+      shortcuts: req.body?.shortcuts,
+    })
+    saveConfig(config)
+    res.json(snapshot())
+  } catch (err) {
+    res.status(400).json({ error: err.message || String(err) })
+  }
 })
 
 app.get('/api/projects/:id/logs', (req, res) => {
   res.json({ logs: manager.getLogs(req.params.id) })
 })
 
-app.post('/api/projects/:id/start', (req, res) => {
-  const project = projectMap().get(req.params.id)
+app.post('/api/projects/:id/start', async (req, res) => {
+  const id = decodeURIComponent(req.params.id)
+  const project = projectMap().get(id)
   if (!project) {
     res.status(404).json({ error: '项目未在监听列表中，或不存在启动命令' })
     return
   }
-  res.json(manager.start(project))
+  const env = req.body?.env
+  const result = await manager.start(project, env)
+  if (result.ok === false) {
+    res.status(400).json(result)
+    return
+  }
+  res.json(result)
 })
 
 app.post('/api/projects/:id/stop', async (req, res) => {
-  res.json(await manager.stop(req.params.id))
+  const id = decodeURIComponent(req.params.id)
+  res.json(await manager.stop(id))
 })
 
 app.post('/api/restart-running', async (_req, res) => {
@@ -127,7 +257,13 @@ app.get('/api/events', (req, res) => {
   res.flushHeaders?.()
   res.write(`event: hello\ndata: ${JSON.stringify({ ok: true })}\n\n`)
   clients.add(res)
-  req.on('close', () => clients.delete(res))
+  const heartbeat = setInterval(() => {
+    res.write(`: ping\n\n`)
+  }, 25000)
+  req.on('close', () => {
+    clearInterval(heartbeat)
+    clients.delete(res)
+  })
 })
 
 const port = config.port || 3920

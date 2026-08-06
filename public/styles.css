@@ -136,8 +136,11 @@ body {
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
   backdrop-filter: blur(12px);
-  animation: rise 0.5s ease both;
   transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.row.enter {
+  animation: rise 0.5s ease both;
 }
 
 .row:hover {
@@ -198,6 +201,46 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.path {
+  margin: 4px 0 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+  opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.env-extra {
+  margin-top: 10px;
+}
+
+.env-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin-top: 10px;
+}
+
+.env-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.env-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.actions .env-label {
+  color: var(--ink);
 }
 
 .actions {
@@ -325,6 +368,64 @@ dialog::backdrop {
   line-height: 1.5;
 }
 
+.field {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.field select,
+.field input,
+.cmd-add-row select,
+.cmd-add-row input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9px 11px;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.cmd-shortcut-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+  max-height: min(28vh, 220px);
+  overflow: auto;
+}
+
+.cmd-shortcut-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.65);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+}
+
+.cmd-add-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+@media (max-width: 640px) {
+  .cmd-add-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 .watch-list {
   display: grid;
   gap: 8px;
@@ -341,7 +442,11 @@ dialog::backdrop {
   border-radius: 12px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.65);
-  cursor: pointer;
+}
+
+.watch-item.source-row {
+  justify-content: space-between;
+  align-items: center;
 }
 
 .watch-item input {
@@ -353,12 +458,37 @@ dialog::backdrop {
   font-size: 0.95rem;
 }
 
-.watch-item span {
+.watch-item span span,
+.watch-item > span > span {
   display: block;
   margin-top: 2px;
   font-family: var(--font-mono);
   font-size: 0.72rem;
   color: var(--muted);
+}
+
+.pick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.source-block {
+  margin-top: 4px;
+}
+
+.source-title {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.ghost.compact {
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  flex: none;
 }
 
 .dialog-actions {

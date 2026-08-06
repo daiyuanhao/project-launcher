@@ -1,11 +1,17 @@
 {
-  "root": "/path/to/your/projects",
   "port": 3920,
   "exclude": [
     "project-launcher",
     "*-bug-worktrees",
     ".claude"
   ],
-  "watch": [],
-  "commands": {}
+  "collections": [],
+  "singles": [],
+  "hidden": [],
+  "commands": {
+    "some-miniprogram": {
+      "default": "build:mp",
+      "shortcuts": ["dev", "test:mp"]
+    }
+  }
 }

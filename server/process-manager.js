@@ -19,6 +19,7 @@ export class ProcessManager extends EventEmitter {
         startedAt: info.startedAt,
         command: info.command,
         path: info.path,
+        env: info.env,
       }
     }
     return status
@@ -32,12 +33,29 @@ export class ProcessManager extends EventEmitter {
     return this.procs.has(id)
   }
 
-  start(project) {
-    if (this.procs.has(project.id)) {
-      return { ok: true, already: true }
+  async start(project, envKey) {
+    const environments = project.environments || [
+      { key: 'default', label: 'default', command: project.command, primary: true },
+    ]
+    const selected =
+      environments.find((e) => e.key === envKey) ||
+      environments.find((e) => e.primary) ||
+      environments[0]
+
+    if (!selected) {
+      return { ok: false, error: '未找到可启动环境' }
     }
 
-    const child = spawn(project.command, {
+    const current = this.procs.get(project.id)
+    if (current) {
+      if (current.env === selected.key) {
+        return { ok: true, already: true, env: selected.key, pid: current.child.pid }
+      }
+      await this.stop(project.id)
+      await new Promise((r) => setTimeout(r, 300))
+    }
+
+    const child = spawn(selected.command, {
       cwd: project.path,
       shell: true,
       detached: true,
@@ -52,8 +70,9 @@ export class ProcessManager extends EventEmitter {
       child,
       startedAt: Date.now(),
       logs: [],
-      command: project.command,
+      command: selected.command,
       path: project.path,
+      env: selected.key,
     }
 
     const append = (chunk, stream) => {
@@ -65,7 +84,7 @@ export class ProcessManager extends EventEmitter {
       if (info.logs.length > MAX_LOG_LINES) {
         info.logs.splice(0, info.logs.length - MAX_LOG_LINES)
       }
-      this.emit('log', { id: project.id, stream, line: text })
+      this.emit('log', { id: project.id, stream, line: text, env: selected.key })
     }
 
     child.stdout?.on('data', (c) => append(c, 'stdout'))
@@ -83,8 +102,8 @@ export class ProcessManager extends EventEmitter {
     })
 
     this.procs.set(project.id, info)
-    this.emit('start', { id: project.id, pid: child.pid })
-    return { ok: true, pid: child.pid }
+    this.emit('start', { id: project.id, pid: child.pid, env: selected.key, command: selected.command })
+    return { ok: true, pid: child.pid, env: selected.key, command: selected.command }
   }
 
   stop(id) {
@@ -130,15 +149,16 @@ export class ProcessManager extends EventEmitter {
   }
 
   async restartRunning(resolveProject) {
-    const ids = [...this.procs.keys()]
+    const entries = [...this.procs.entries()]
     const restarted = []
 
-    for (const id of ids) {
+    for (const [id, info] of entries) {
       const project = resolveProject(id)
       if (!project) continue
+      const env = info.env
       await this.stop(id)
       await new Promise((r) => setTimeout(r, 400))
-      const result = this.start(project)
+      const result = await this.start(project, env)
       restarted.push({ id, ...result })
     }
 
