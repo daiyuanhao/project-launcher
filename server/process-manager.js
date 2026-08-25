@@ -6,31 +6,50 @@ const MAX_LOG_LINES = 400
 export class ProcessManager extends EventEmitter {
   constructor() {
     super()
-    /** @type {Map<string, any>} */
+    /** @type {Map<string, Map<string, any>>} */
     this.procs = new Map()
+  }
+
+  byProject(id) {
+    return this.procs.get(id) || new Map()
   }
 
   listStatus() {
     const status = {}
-    for (const [id, info] of this.procs) {
-      status[id] = {
-        running: true,
+    for (const [id, byEnv] of this.procs) {
+      const processes = [...byEnv.values()].map((info) => ({
+        env: info.env,
         pid: info.child.pid,
         startedAt: info.startedAt,
         command: info.command,
-        path: info.path,
-        env: info.env,
+      }))
+      status[id] = {
+        running: processes.length > 0,
+        runningEnvs: processes.map((p) => p.env),
+        processes,
+        pid: processes[0]?.pid ?? null,
+        startedAt: processes[0]?.startedAt ?? null,
+        command: processes.map((p) => p.command).join(' · ') || null,
+        env: processes.length === 1 ? processes[0].env : processes.map((p) => p.env).join(','),
       }
     }
     return status
   }
 
   getLogs(id) {
-    return this.procs.get(id)?.logs ?? []
+    const rows = []
+    for (const info of this.byProject(id).values()) {
+      for (const item of info.logs) {
+        rows.push({ ...item, env: info.env })
+      }
+    }
+    rows.sort((a, b) => a.t - b.t)
+    return rows
   }
 
-  isRunning(id) {
-    return this.procs.has(id)
+  isRunning(id, envKey) {
+    if (envKey) return this.byProject(id).has(envKey)
+    return this.procs.has(id) && this.byProject(id).size > 0
   }
 
   async start(project, envKey) {
@@ -46,13 +65,9 @@ export class ProcessManager extends EventEmitter {
       return { ok: false, error: '未找到可启动环境' }
     }
 
-    const current = this.procs.get(project.id)
+    const current = this.byProject(project.id).get(selected.key)
     if (current) {
-      if (current.env === selected.key) {
-        return { ok: true, already: true, env: selected.key, pid: current.child.pid }
-      }
-      await this.stop(project.id)
-      await new Promise((r) => setTimeout(r, 300))
+      return { ok: true, already: true, env: selected.key, pid: current.child.pid }
     }
 
     const child = spawn(selected.command, {
@@ -90,24 +105,51 @@ export class ProcessManager extends EventEmitter {
     child.stdout?.on('data', (c) => append(c, 'stdout'))
     child.stderr?.on('data', (c) => append(c, 'stderr'))
 
+    const drop = () => {
+      const byEnv = this.procs.get(project.id)
+      if (!byEnv) return
+      byEnv.delete(selected.key)
+      if (!byEnv.size) this.procs.delete(project.id)
+    }
+
     child.on('exit', (code, signal) => {
-      this.procs.delete(project.id)
-      this.emit('exit', { id: project.id, code, signal })
+      drop()
+      this.emit('exit', { id: project.id, code, signal, env: selected.key })
     })
 
     child.on('error', (err) => {
       info.logs.push({ t: Date.now(), stream: 'stderr', line: String(err.message || err) })
-      this.procs.delete(project.id)
-      this.emit('exit', { id: project.id, code: 1, signal: null, error: String(err.message || err) })
+      drop()
+      this.emit('exit', {
+        id: project.id,
+        code: 1,
+        signal: null,
+        error: String(err.message || err),
+        env: selected.key,
+      })
     })
 
-    this.procs.set(project.id, info)
-    this.emit('start', { id: project.id, pid: child.pid, env: selected.key, command: selected.command })
+    if (!this.procs.has(project.id)) this.procs.set(project.id, new Map())
+    this.procs.get(project.id).set(selected.key, info)
+    this.emit('start', {
+      id: project.id,
+      pid: child.pid,
+      env: selected.key,
+      command: selected.command,
+    })
     return { ok: true, pid: child.pid, env: selected.key, command: selected.command }
   }
 
-  stop(id) {
-    const info = this.procs.get(id)
+  stop(id, envKey) {
+    const byEnv = this.procs.get(id)
+    if (!byEnv?.size) return Promise.resolve({ ok: true, already: true })
+
+    const keys = envKey ? [envKey] : [...byEnv.keys()]
+    return Promise.all(keys.map((key) => this.stopOne(id, key))).then((results) => results[0] || { ok: true })
+  }
+
+  stopOne(id, envKey) {
+    const info = this.byProject(id).get(envKey)
     if (!info) return Promise.resolve({ ok: true, already: true })
 
     const { child } = info
@@ -119,7 +161,7 @@ export class ProcessManager extends EventEmitter {
         resolve(result)
       }
 
-      child.once('exit', () => done({ ok: true, pid }))
+      child.once('exit', () => done({ ok: true, pid, env: envKey }))
 
       try {
         if (pid) process.kill(-pid, 'SIGTERM')
@@ -141,25 +183,28 @@ export class ProcessManager extends EventEmitter {
             // ignore
           }
         }
-        // exit handler will resolve; fallback if already gone
-        if (!this.procs.has(id)) done({ ok: true, pid })
+        if (!this.byProject(id).has(envKey)) done({ ok: true, pid, env: envKey })
       }, 4000)
       forceTimer.unref?.()
     })
   }
 
   async restartRunning(resolveProject) {
-    const entries = [...this.procs.entries()]
+    const jobs = []
+    for (const [id, byEnv] of this.procs) {
+      for (const env of byEnv.keys()) {
+        jobs.push({ id, env })
+      }
+    }
     const restarted = []
 
-    for (const [id, info] of entries) {
+    for (const { id, env } of jobs) {
       const project = resolveProject(id)
       if (!project) continue
-      const env = info.env
-      await this.stop(id)
+      await this.stop(id, env)
       await new Promise((r) => setTimeout(r, 400))
       const result = await this.start(project, env)
-      restarted.push({ id, ...result })
+      restarted.push({ id, env, ...result })
     }
 
     return { ok: true, count: restarted.length, restarted }

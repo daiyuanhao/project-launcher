@@ -63,8 +63,10 @@ function snapshot() {
     sources: listSources(config),
     projects: projects.map((p) => ({
       ...p,
-      running: Boolean(status[p.id]),
+      running: Boolean(status[p.id]?.running),
       runningEnv: status[p.id]?.env ?? null,
+      runningEnvs: status[p.id]?.runningEnvs ?? [],
+      processes: status[p.id]?.processes ?? [],
       pid: status[p.id]?.pid ?? null,
       startedAt: status[p.id]?.startedAt ?? null,
       command: status[p.id]?.command ?? p.command,
@@ -245,7 +247,8 @@ app.post('/api/projects/:id/start', async (req, res) => {
 
 app.post('/api/projects/:id/stop', async (req, res) => {
   const id = decodeURIComponent(req.params.id)
-  res.json(await manager.stop(id))
+  const env = req.body?.env
+  res.json(await manager.stop(id, env))
 })
 
 app.post('/api/restart-running', async (_req, res) => {

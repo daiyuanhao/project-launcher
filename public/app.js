@@ -61,12 +61,63 @@ function extraEnvs(p) {
   return (p.environments || []).filter((e) => e.key !== primary?.key)
 }
 
+function runningEnvsOf(p) {
+  if (Array.isArray(p.runningEnvs) && p.runningEnvs.length) return p.runningEnvs
+  if (p.running && p.runningEnv) return [p.runningEnv]
+  return []
+}
+
+function isEnvOn(p, envKey) {
+  return runningEnvsOf(p).includes(envKey)
+}
+
+function busyEnvsOf(p) {
+  if (p.busyEnvs instanceof Set) return p.busyEnvs
+  return new Set()
+}
+
+function isEnvBusy(p, envKey) {
+  return busyEnvsOf(p).has(envKey)
+}
+
+function setEnvBusy(p, envKey, busy) {
+  if (!(p.busyEnvs instanceof Set)) p.busyEnvs = new Set()
+  if (busy) p.busyEnvs.add(envKey)
+  else p.busyEnvs.delete(envKey)
+}
+
+function addRunningEnv(p, envKey, extra = {}) {
+  const next = new Set(runningEnvsOf(p))
+  next.add(envKey)
+  p.runningEnvs = [...next]
+  p.running = p.runningEnvs.length > 0
+  p.runningEnv = p.runningEnvs.length === 1 ? p.runningEnvs[0] : p.runningEnvs.join(',')
+  if (extra.command) {
+    const procs = Array.isArray(p.processes) ? [...p.processes] : []
+    const idx = procs.findIndex((x) => x.env === envKey)
+    const row = { env: envKey, command: extra.command, pid: extra.pid, startedAt: extra.startedAt || Date.now() }
+    if (idx >= 0) procs[idx] = { ...procs[idx], ...row }
+    else procs.push(row)
+    p.processes = procs
+  }
+}
+
+function removeRunningEnv(p, envKey) {
+  p.runningEnvs = runningEnvsOf(p).filter((k) => k !== envKey)
+  p.running = p.runningEnvs.length > 0
+  p.runningEnv = p.runningEnvs.length === 1 ? p.runningEnvs[0] : p.runningEnvs.join(',') || null
+  p.processes = (p.processes || []).filter((x) => x.env !== envKey)
+  if (!p.running) {
+    p.pid = null
+    p.startedAt = null
+  }
+}
+
 function projectFingerprint(p) {
   return [
     p.id,
-    p.running ? 1 : 0,
-    p.runningEnv || '',
-    p.busy ? 1 : 0,
+    runningEnvsOf(p).join(','),
+    [...busyEnvsOf(p)].join(','),
     p.command || '',
     p.hasNodeModules ? 1 : 0,
     expandedEnvs.has(p.id) ? 1 : 0,
@@ -76,10 +127,10 @@ function projectFingerprint(p) {
 
 function applySnapshot(data) {
   sources = data.sources || { collections: [], singles: [] }
-  const prevBusy = new Map([...projects].map(([id, p]) => [id, p.busy]))
+  const prevBusy = new Map([...projects].map(([id, p]) => [id, p.busyEnvs]))
   projects.clear()
   for (const p of data.projects || []) {
-    projects.set(p.id, { ...p, busy: prevBusy.get(p.id) || false })
+    projects.set(p.id, { ...p, busyEnvs: prevBusy.get(p.id) || new Set() })
   }
   boardFingerprint = ''
   render()
@@ -87,13 +138,14 @@ function applySnapshot(data) {
 }
 
 function renderEnvSwitch(p, env, opts = {}) {
-  const on = p.running && p.runningEnv === env.key
+  const on = isEnvOn(p, env.key)
+  const busy = isEnvBusy(p, env.key)
   const label = opts.showLabel ? `<span class="env-label">${escapeHtml(env.label)}</span>` : ''
   return `
-    <label class="env-switch ${p.busy ? 'busy' : ''}" title="${on ? `关闭 ${env.label}` : `启动 ${env.label}`}">
+    <label class="env-switch ${busy ? 'busy' : ''}" title="${on ? `关闭 ${env.label}` : `启动 ${env.label}`}">
       ${label}
-      <span class="switch ${p.busy ? 'busy' : ''}">
-        <input type="checkbox" data-id="${escapeAttr(p.id)}" data-env="${escapeAttr(env.key)}" ${on ? 'checked' : ''} ${p.busy ? 'disabled' : ''} />
+      <span class="switch ${busy ? 'busy' : ''}">
+        <input type="checkbox" data-id="${escapeAttr(p.id)}" data-env="${escapeAttr(env.key)}" ${on ? 'checked' : ''} ${busy ? 'disabled' : ''} />
         <span class="track"></span>
         <span class="thumb"></span>
       </span>
@@ -151,16 +203,26 @@ function render() {
       const primary = primaryEnv(p)
       const extras = extraEnvs(p)
       const expanded = expandedEnvs.has(p.id)
-      const activeCmd =
-        (p.environments || []).find((e) => e.key === p.runningEnv)?.command ||
-        primary?.command ||
-        p.command
+      const runningList = runningEnvsOf(p)
+      const activeCmds = runningList.length
+        ? runningList.map((key) => {
+            const fromProc = (p.processes || []).find((x) => x.env === key)
+            const fromEnv = (p.environments || []).find((e) => e.key === key)
+            return fromProc?.command || fromEnv?.command || p.command
+          })
+        : [primary?.command || p.command]
+      const activeCmd = activeCmds.filter(Boolean).join('  ·  ')
+
+      const liveBadges = (p.processes || []).length
+        ? p.processes.map(
+            (proc) =>
+              `<span class="badge live" data-uptime="${proc.startedAt || ''}" data-env="${escapeAttr(proc.env)}">${escapeHtml(proc.env)}${proc.startedAt ? ' · ' + formatUptime(proc.startedAt) : ''}</span>`,
+          )
+        : runningList.map((key) => `<span class="badge live">${escapeHtml(key)}</span>`)
 
       const badges = [
         `<span class="badge">${p.packageManager}</span>`,
-        p.running && p.runningEnv
-          ? `<span class="badge live" data-uptime="${p.startedAt || ''}" data-env="${escapeAttr(p.runningEnv)}">${escapeHtml(p.runningEnv)}${p.startedAt ? ' · ' + formatUptime(p.startedAt) : ''}</span>`
-          : '',
+        ...liveBadges,
         !p.hasNodeModules ? `<span class="badge warn">无 node_modules</span>` : '',
       ]
         .filter(Boolean)
@@ -375,7 +437,7 @@ async function removeSource(kind, sourcePath) {
 async function toggle(id, wantOn, envKey) {
   const project = projects.get(id)
   if (!project) return
-  project.busy = true
+  setEnvBusy(project, envKey, true)
   render()
 
   try {
@@ -387,31 +449,29 @@ async function toggle(id, wantOn, envKey) {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || '启动失败')
-      project.running = true
-      project.runningEnv = data.env || envKey
-      project.command = data.command || project.command
-      project.pid = data.pid ?? project.pid
-      project.startedAt = Date.now()
+      addRunningEnv(project, data.env || envKey, {
+        command: data.command,
+        pid: data.pid,
+        startedAt: Date.now(),
+      })
+      const extra = extraEnvs(project).some((e) => e.key === (data.env || envKey))
+      if (extra) expandedEnvs.add(id)
       openLogs(id)
     } else {
-      if (project.runningEnv && envKey && project.runningEnv !== envKey) {
-        return
-      }
       const res = await fetch(`/api/projects/${encodeURIComponent(id)}/stop`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ env: envKey }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || '停止失败')
-      project.running = false
-      project.runningEnv = null
-      project.pid = null
-      project.startedAt = null
+      removeRunningEnv(project, envKey)
     }
   } catch (err) {
     alert(err.message || String(err))
     await loadProjects()
   } finally {
-    project.busy = false
+    setEnvBusy(project, envKey, false)
     render()
   }
 }
@@ -424,21 +484,22 @@ async function openLogs(id) {
   const res = await fetch(`/api/projects/${encodeURIComponent(id)}/logs`)
   const data = await res.json()
   logsEl.innerHTML = (data.logs || [])
-    .map(
-      (item) =>
-        `<div class="${item.stream === 'stderr' ? 'stderr' : ''}">${escapeHtml(item.line)}</div>`,
-    )
+    .map((item) => {
+      const prefix = item.env ? `[${item.env}] ` : ''
+      return `<div class="${item.stream === 'stderr' ? 'stderr' : ''}">${escapeHtml(prefix + item.line)}</div>`
+    })
     .join('')
   logsEl.scrollTop = logsEl.scrollHeight
 }
 
-function appendLog(id, stream, text) {
+function appendLog(id, stream, text, env) {
   if (activeLogId !== id || drawer.hidden) return
   const lines = String(text).split(/\r?\n/).filter(Boolean)
+  const prefix = env ? `[${env}] ` : ''
   for (const line of lines) {
     const div = document.createElement('div')
     if (stream === 'stderr') div.className = 'stderr'
-    div.textContent = line
+    div.textContent = prefix + line
     logsEl.appendChild(div)
   }
   logsEl.scrollTop = logsEl.scrollHeight
@@ -581,7 +642,8 @@ restartRunningBtn.addEventListener('click', async () => {
   restarting = true
   for (const id of runningIds) {
     const p = projects.get(id)
-    if (p) p.busy = true
+    if (!p) continue
+    for (const env of runningEnvsOf(p)) setEnvBusy(p, env, true)
   }
   render()
 
@@ -595,6 +657,7 @@ restartRunningBtn.addEventListener('click', async () => {
     await loadProjects()
   } finally {
     restarting = false
+    for (const p of projects.values()) p.busyEnvs = new Set()
     render()
   }
 })
@@ -607,34 +670,41 @@ function connectEvents() {
     const data = JSON.parse(ev.data)
     const p = projects.get(data.id)
     if (!p) return
-    const same =
-      p.running &&
-      p.runningEnv === (data.env || p.runningEnv) &&
-      p.pid === data.pid &&
-      !p.busy
-    p.running = true
-    p.runningEnv = data.env || p.runningEnv
-    p.command = data.command || p.command
-    p.pid = data.pid
-    if (!p.startedAt) p.startedAt = Date.now()
-    p.busy = false
+    const envKey = data.env
+    const same = isEnvOn(p, envKey) && !isEnvBusy(p, envKey)
+    addRunningEnv(p, envKey, {
+      command: data.command,
+      pid: data.pid,
+      startedAt: Date.now(),
+    })
+    setEnvBusy(p, envKey, false)
+    if (extraEnvs(p).some((e) => e.key === envKey)) expandedEnvs.add(data.id)
     if (!same) render()
   })
   es.addEventListener('exit', (ev) => {
     const data = JSON.parse(ev.data)
     const p = projects.get(data.id)
     if (!p) return
-    if (!p.running && !p.busy) return
-    p.running = false
-    p.runningEnv = null
-    p.pid = null
-    p.startedAt = null
-    p.busy = false
+    const envKey = data.env
+    if (envKey) {
+      if (!isEnvOn(p, envKey) && !isEnvBusy(p, envKey)) return
+      removeRunningEnv(p, envKey)
+      setEnvBusy(p, envKey, false)
+    } else if (!p.running && !busyEnvsOf(p).size) {
+      return
+    } else {
+      p.running = false
+      p.runningEnv = null
+      p.runningEnvs = []
+      p.processes = []
+      p.pid = null
+      p.startedAt = null
+    }
     render()
   })
   es.addEventListener('log', (ev) => {
     const data = JSON.parse(ev.data)
-    appendLog(data.id, data.stream, data.line)
+    appendLog(data.id, data.stream, data.line, data.env)
   })
   es.onerror = () => {
     eventsConnected = false

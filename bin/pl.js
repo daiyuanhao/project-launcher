@@ -28,16 +28,16 @@ function usage() {
 
   pl                      启动面板并打开浏览器
   pl ls                   列出已监听项目
-  pl start <名字> [命令]  启动项目（可写简称）
-  pl stop [名字]          停止；不写名字且只跑着一个则直接停
+  pl start <名字> [命令]  启动项目（可写简称；可同时开多个命令）
+  pl stop [名字] [命令]   停止；不写命令则停该项目全部
   pl restart [名字]       重启；不写名字则重启全部运行中
   pl stop-all             停止全部运行中
   pl open                 打开面板
 
 例子：
   pl start miniprogram
-  pl start miniprogram build:mp
-  pl stop web
+  pl start pms preview:ui
+  pl stop pms preview:ui
 `)
 }
 
@@ -169,7 +169,8 @@ async function listProjects() {
   const nameW = Math.min(40, Math.max(12, ...projects.map((p) => p.name.length)))
   for (const p of projects) {
     const mark = p.running ? '●' : '○'
-    const state = p.running ? `运行中 ${p.runningEnv || ''}`.trim() : '未运行'
+    const envs = p.runningEnvs?.length ? p.runningEnvs.join(',') : p.runningEnv || ''
+    const state = p.running ? `运行中 ${envs}`.trim() : '未运行'
     const cmd = p.running ? p.command : (p.environments || []).find((e) => e.primary)?.command || p.command
     console.log(`${mark} ${pad(p.name, nameW)}  ${pad(state, 16)}  ${cmd}`)
   }
@@ -188,7 +189,7 @@ async function startProject(name, envQuery) {
   console.log(result.command || env.command || project.command)
 }
 
-async function stopProject(name) {
+async function stopProject(name, envQuery) {
   const data = await api('/api/projects')
   const projects = data.projects || []
   let project
@@ -211,8 +212,13 @@ async function stopProject(name) {
     console.log(`${project.name} 未在运行`)
     return
   }
-  await api(`/api/projects/${encodeURIComponent(project.id)}/stop`, { method: 'POST' })
-  console.log(`已停止 ${project.name}`)
+  let env
+  if (envQuery) env = matchEnv(project, envQuery)
+  await api(`/api/projects/${encodeURIComponent(project.id)}/stop`, {
+    method: 'POST',
+    body: env ? { env: env.key } : {},
+  })
+  console.log(env ? `已停止 ${project.name} · ${env.key}` : `已停止 ${project.name}`)
 }
 
 async function stopAll() {
@@ -236,14 +242,21 @@ async function restart(name) {
   }
   const data = await api('/api/projects')
   const project = pickOne(data.projects || [], name, '项目')
-  const envKey = project.runningEnv
+  const envs = project.runningEnvs?.length
+    ? project.runningEnvs
+    : project.runningEnv
+      ? [project.runningEnv]
+      : []
   if (project.running) {
     await api(`/api/projects/${encodeURIComponent(project.id)}/stop`, { method: 'POST' })
   }
-  await api(`/api/projects/${encodeURIComponent(project.id)}/start`, {
-    method: 'POST',
-    body: { env: envKey },
-  })
+  const targets = envs.length ? envs : [undefined]
+  for (const envKey of targets) {
+    await api(`/api/projects/${encodeURIComponent(project.id)}/start`, {
+      method: 'POST',
+      body: { env: envKey },
+    })
+  }
   console.log(`已重启 ${project.name}`)
 }
 
@@ -283,7 +296,7 @@ async function main() {
   }
 
   if (cmd === 'stop') {
-    await stopProject(rest[0])
+    await stopProject(rest[0], rest[1])
     return
   }
 
