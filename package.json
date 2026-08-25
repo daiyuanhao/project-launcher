@@ -4,9 +4,13 @@
   "private": true,
   "description": "一项目一开关：本地多项目启停面板",
   "type": "module",
+  "bin": {
+    "pl": "bin/pl.js"
+  },
   "scripts": {
     "start": "node server/index.js",
-    "dev": "node --watch server/index.js"
+    "dev": "node --watch server/index.js",
+    "link": "node bin/install-cli.js"
   },
   "engines": {
     "node": ">=18"

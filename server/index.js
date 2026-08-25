@@ -87,6 +87,10 @@ manager.on('start', (payload) => broadcast('start', payload))
 manager.on('exit', (payload) => broadcast('exit', payload))
 manager.on('log', (payload) => broadcast('log', payload))
 
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true })
+})
+
 app.get('/api/projects', (_req, res) => {
   res.json(snapshot())
 })
