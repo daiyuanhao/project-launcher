@@ -245,8 +245,13 @@ body {
 
 .actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   align-items: center;
+}
+
+.actions .ghost {
+  white-space: nowrap;
 }
 
 .ghost {
@@ -265,6 +270,12 @@ body {
 .ghost:hover {
   background: #fff;
   transform: translateY(-1px);
+}
+
+.ghost:disabled {
+  opacity: 0.55;
+  cursor: wait;
+  transform: none;
 }
 
 .switch {

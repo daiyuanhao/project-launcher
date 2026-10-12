@@ -29,6 +29,7 @@ const projects = new Map()
 let sources = { collections: [], singles: [] }
 /** @type {Set<string>} */
 const expandedEnvs = new Set()
+const openingTerminals = new Set()
 let activeLogId = null
 let query = ''
 let restarting = false
@@ -121,6 +122,7 @@ function projectFingerprint(p) {
     p.command || '',
     p.hasNodeModules ? 1 : 0,
     expandedEnvs.has(p.id) ? 1 : 0,
+    openingTerminals.has(p.id) ? 1 : 0,
     (p.environments || []).map((e) => e.key).join(','),
   ].join('|')
 }
@@ -254,6 +256,7 @@ function render() {
             ${extraBlock}
           </div>
           <div class="actions">
+            <button type="button" class="ghost terminal-btn" data-id="${escapeAttr(p.id)}" title="在终端中打开 ${escapeAttr(p.path)}，手动输入命令" ${openingTerminals.has(p.id) ? 'disabled aria-busy="true"' : ''}>${openingTerminals.has(p.id) ? '打开中…' : '打开终端'}</button>
             <button type="button" class="ghost compact cmd-btn" data-id="${escapeAttr(p.id)}" title="设置默认与快捷命令">命令</button>
             <button type="button" class="ghost log-btn" data-id="${escapeAttr(p.id)}">日志</button>
             <button type="button" class="ghost remove-btn" data-id="${escapeAttr(p.id)}" title="从列表移除">移除</button>
@@ -476,6 +479,32 @@ async function toggle(id, wantOn, envKey) {
   }
 }
 
+async function openTerminal(id) {
+  if (!projects.has(id) || openingTerminals.has(id)) return
+  openingTerminals.add(id)
+  render()
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(id)}/terminal`, {
+      method: 'POST',
+    })
+    let data
+    try {
+      data = JSON.parse(await res.text())
+    } catch {
+      if (res.status === 404) {
+        throw new Error('当前面板服务版本较旧，不支持打开终端。请重启面板服务；仅刷新页面或执行 pl open 不会重启服务。')
+      }
+      throw new Error(`打开终端失败：服务返回了无效响应（HTTP ${res.status}）`)
+    }
+    if (!res.ok) throw new Error(data?.error || '打开终端失败')
+  } catch (err) {
+    alert(err.message || String(err))
+  } finally {
+    openingTerminals.delete(id)
+    render()
+  }
+}
+
 async function openLogs(id) {
   activeLogId = id
   const project = projects.get(id)
@@ -528,6 +557,12 @@ board.addEventListener('change', (e) => {
 })
 
 board.addEventListener('click', async (e) => {
+  const terminalBtn = e.target.closest('.terminal-btn')
+  if (terminalBtn) {
+    openTerminal(terminalBtn.dataset.id)
+    return
+  }
+
   const toggleBtn = e.target.closest('.env-toggle')
   if (toggleBtn) {
     const id = toggleBtn.dataset.id

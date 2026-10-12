@@ -12,6 +12,7 @@ import {
 } from './discover.js'
 import { chooseFolder } from './picker.js'
 import { ProcessManager } from './process-manager.js'
+import { openTerminal } from './terminal.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const rootDir = path.resolve(__dirname, '..')
@@ -227,6 +228,20 @@ app.put('/api/projects/:id/commands', (req, res) => {
 
 app.get('/api/projects/:id/logs', (req, res) => {
   res.json({ logs: manager.getLogs(req.params.id) })
+})
+
+app.post('/api/projects/:id/terminal', async (req, res) => {
+  const project = projectMap().get(req.params.id)
+  if (!project) {
+    res.status(404).json({ error: '项目未在监听列表中，或不存在启动命令' })
+    return
+  }
+  try {
+    await openTerminal(project.path)
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message || String(err) })
+  }
 })
 
 app.post('/api/projects/:id/start', async (req, res) => {
